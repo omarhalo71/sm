@@ -80,26 +80,35 @@ socket.on("saveCallLog", ({ from, to, duration, type }) => {
     
 
     // ✅ إرسال طلب اتصال
-    socket.on("callUser", ({ userToCall, from, signal }) => {
-      console.log(`📞 المستخدم ${from} يتصل بـ ${userToCall}`);
-      if (users[userToCall]) {
-        io.to(users[userToCall]).emit("incomingCall", { from, signal });
-    
-        // 🟢 تسجيل المكالمة النشطة
-        activeCalls[from] = userToCall;
-        activeCalls[userToCall] = from;
-      }
-    });
+    // ✅ إرسال طلب اتصال
+socket.on("callUser", ({ userToCall, from, signal }) => {
+  console.log(`📞 المستخدم ${from} يتصل بـ ${userToCall}`);
+  if (users[userToCall]) {
+    io.to(users[userToCall]).emit("incomingCall", { from, signal });
+    // 🟢 تسجيل المكالمة النشطة
+    activeCalls[from] = userToCall;
+    activeCalls[userToCall] = from;
+  }
+});
+
     
     
 
-    // ✅ الرد على الاتصال
-    socket.on("answerCall", ({ to, signal }) => {
-        if (users[to]) {
-            console.log(`✅ المستخدم ${to} قبل المكالمة مع ${activeCalls[to]}`);
-            io.to(users[to]).emit("callAccepted", { signal });
-        }
-    });
+    // ✅ الرد على المكالمة
+socket.on("answerCall", ({ to, signal }) => {
+    if (users[to]) {
+        console.log(`✅ المستخدم ${to} قبل المكالمة مع ${activeCalls[to]}`);
+        
+        // إرسال إشعار للطرف الآخر بأن المكالمة قد تم قبولها
+        io.to(users[to]).emit("callAccepted", { signal });
+
+        // إرسال إشعار لتحديث حالة الاتصال للطرف الآخر إلى "متصل"
+        io.to(users[to]).emit("userStatusUpdate", { userId: to, status: "online" });
+    }
+});
+
+
+
 
     // ✅ تمرير `ICE Candidates`
     socket.on("iceCandidate", ({ to, candidate }) => {
@@ -111,26 +120,24 @@ socket.on("saveCallLog", ({ from, to, duration, type }) => {
     
     
 
-    // ✅ إنهاء المكالمة
-    socket.on("endCall", ({ from, to }) => {
-        console.log(`📴 إنهاء المكالمة بين ${from} و ${to}`);
+   // ✅ إنهاء المكالمة
+socket.on("endCall", ({ from, to }) => {
+    console.log(`📴 إنهاء المكالمة بين ${from} و ${to}`);
+    if (users[to]) io.to(users[to]).emit("endCall");
+    if (users[from]) io.to(users[from]).emit("endCall");
     
-        // إنهاء المكالمة عند الطرفين
-        if (users[to]) io.to(users[to]).emit("endCall");
-        if (users[from]) io.to(users[from]).emit("endCall");
-    
-        delete activeCalls[from];
-        delete activeCalls[to];
-    });
-    
+    delete activeCalls[from];
+    delete activeCalls[to];
+});
 
-    // ✅ رفض المكالمة
-    socket.on("rejectCall", ({ to }) => {
-        if (users[to]) {
-            console.log(`❌ المستخدم ${to} رفض المكالمة.`);
-            io.to(users[to]).emit("callRejected");
-        }
-    });
+// ✅ رفض المكالمة
+socket.on("rejectCall", ({ to }) => {
+    if (users[to]) {
+        console.log(`❌ المستخدم ${to} رفض المكالمة.`);
+        io.to(users[to]).emit("callRejected");
+    }
+});
+
 
     // ✅ تسجيل خروج المستخدم عند قطع الاتصال
     
