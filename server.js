@@ -49,9 +49,11 @@ socket.on("saveCallLog", ({ from, to, duration, type }) => {
 
     // ✅ تسجيل المستخدم عند الاتصال
     socket.on("registerUser", userID => {
-        users[userID] = socket.id;
-        console.log(`📌 المستخدم ${userID} تم تسجيله. المتصلين حاليًا:`, users);
-    });
+    users[userID] = socket.id;
+    console.log(`📌 المستخدم ${userID} تم تسجيله. المتصلين حاليًا:`, users);
+    io.emit("userStatusUpdate", { userId: userID, status: "online" });
+});
+
     
     socket.on("disconnect", () => {
       console.log("🔴 المستخدم قطع الاتصال:", socket.id);
@@ -60,7 +62,7 @@ socket.on("saveCallLog", ({ from, to, duration, type }) => {
         if (users[userID] === socket.id) {
           console.log(`🚪 خروج المستخدم ${userID}`);
           delete users[userID];
-    
+    io.emit("userStatusUpdate", { userId: userID, status: "offline" });
           // إذا كان في مكالمة، بلغ الطرف الثاني
           if (activeCalls[userID]) {
             const otherUser = activeCalls[userID];
