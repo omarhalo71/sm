@@ -49,11 +49,9 @@ socket.on("saveCallLog", ({ from, to, duration, type }) => {
 
     // ✅ تسجيل المستخدم عند الاتصال
     socket.on("registerUser", userID => {
-    users[userID] = socket.id;
-    console.log(`📌 المستخدم ${userID} تم تسجيله. المتصلين حاليًا:`, users);
-    io.emit("userStatusUpdate", { userId: userID, status: "online" });
-});
-
+        users[userID] = socket.id;
+        console.log(`📌 المستخدم ${userID} تم تسجيله. المتصلين حاليًا:`, users);
+    });
     
     socket.on("disconnect", () => {
       console.log("🔴 المستخدم قطع الاتصال:", socket.id);
@@ -62,7 +60,7 @@ socket.on("saveCallLog", ({ from, to, duration, type }) => {
         if (users[userID] === socket.id) {
           console.log(`🚪 خروج المستخدم ${userID}`);
           delete users[userID];
-    io.emit("userStatusUpdate", { userId: userID, status: "offline" });
+    
           // إذا كان في مكالمة، بلغ الطرف الثاني
           if (activeCalls[userID]) {
             const otherUser = activeCalls[userID];
@@ -80,35 +78,26 @@ socket.on("saveCallLog", ({ from, to, duration, type }) => {
     
 
     // ✅ إرسال طلب اتصال
-    // ✅ إرسال طلب اتصال
-socket.on("callUser", ({ userToCall, from, signal }) => {
-  console.log(`📞 المستخدم ${from} يتصل بـ ${userToCall}`);
-  if (users[userToCall]) {
-    io.to(users[userToCall]).emit("incomingCall", { from, signal });
-    // 🟢 تسجيل المكالمة النشطة
-    activeCalls[from] = userToCall;
-    activeCalls[userToCall] = from;
-  }
-});
-
+    socket.on("callUser", ({ userToCall, from, signal }) => {
+      console.log(`📞 المستخدم ${from} يتصل بـ ${userToCall}`);
+      if (users[userToCall]) {
+        io.to(users[userToCall]).emit("incomingCall", { from, signal });
+    
+        // 🟢 تسجيل المكالمة النشطة
+        activeCalls[from] = userToCall;
+        activeCalls[userToCall] = from;
+      }
+    });
     
     
 
-    // ✅ الرد على المكالمة
-socket.on("answerCall", ({ to, signal }) => {
-    if (users[to]) {
-        console.log(`✅ المستخدم ${to} قبل المكالمة مع ${activeCalls[to]}`);
-        
-        // إرسال إشعار للطرف الآخر بأن المكالمة قد تم قبولها
-        io.to(users[to]).emit("callAccepted", { signal });
-
-        // إرسال إشعار لتحديث حالة الاتصال للطرف الآخر إلى "متصل"
-        io.to(users[to]).emit("userStatusUpdate", { userId: to, status: "online" });
-    }
-});
-
-
-
+    // ✅ الرد على الاتصال
+    socket.on("answerCall", ({ to, signal }) => {
+        if (users[to]) {
+            console.log(`✅ المستخدم ${to} قبل المكالمة مع ${activeCalls[to]}`);
+            io.to(users[to]).emit("callAccepted", { signal });
+        }
+    });
 
     // ✅ تمرير `ICE Candidates`
     socket.on("iceCandidate", ({ to, candidate }) => {
@@ -120,25 +109,41 @@ socket.on("answerCall", ({ to, signal }) => {
     
     
 
-   // ✅ إنهاء المكالمة
-socket.on("endCall", ({ from, to }) => {
-    console.log(`📴 إنهاء المكالمة بين ${from} و ${to}`);
-    if (users[to]) io.to(users[to]).emit("endCall");
-    if (users[from]) io.to(users[from]).emit("endCall");
+    // ✅ إنهاء المكالمة
+    socket.on("endCall", ({ from, to }) => {
+        console.log(`📴 إنهاء المكالمة بين ${from} و ${to}`);
     
-    delete activeCalls[from];
-    delete activeCalls[to];
-});
+        // إنهاء المكالمة عند الطرفين
+        if (users[to]) io.to(users[to]).emit("endCall");
+        if (users[from]) io.to(users[from]).emit("endCall");
+    
+        delete activeCalls[from];
+        delete activeCalls[to];
+    });
+    
 
-// ✅ رفض المكالمة
-socket.on("rejectCall", ({ to }) => {
-    if (users[to]) {
-        console.log(`❌ المستخدم ${to} رفض المكالمة.`);
-        io.to(users[to]).emit("callRejected");
-    }
-});
-
+    // ✅ رفض المكالمة
+    socket.on("rejectCall", ({ to }) => {
+        if (users[to]) {
+            console.log(`❌ المستخدم ${to} رفض المكالمة.`);
+            io.to(users[to]).emit("callRejected");
+        }
+    });
 
     // ✅ تسجيل خروج المستخدم عند قطع الاتصال
     
+});
+socket.on("userStatusUpdate", (data) => {
+    const dot = document.getElementById("status-" + data.userId);  // الحصول على الدائرة التي تمثل حالة الاتصال
+    if (dot) {
+        if (data.status === "online") {
+            // تغيير الحالة إلى "متصل" (اللون الأخضر)
+            dot.classList.add("online");
+            dot.classList.remove("offline");  // إزالة اللون الرمادي
+        } else {
+            // إذا كانت الحالة "غير متصل"
+            dot.classList.remove("online");  // إزالة اللون الأخضر
+            dot.classList.add("offline");  // إضافة اللون الرمادي
+        }
+    }
 });
