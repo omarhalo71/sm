@@ -131,19 +131,14 @@ socket.on("saveCallLog", ({ from, to, duration, type }) => {
     });
 
     // ✅ تسجيل خروج المستخدم عند قطع الاتصال
-    
+    socket.on("updateUserStatus", (data) => {
+    // فقط نرسل لباقي المستخدمين عن حالة هاد المستخدم
+    io.emit("updateUserStatus", {
+        userId: data.userId,
+        status: data.status
+    });
+    console.log("📶 تحديث حالة المستخدم:", data.userId, "->", data.status);
 });
-socket.on("userStatusUpdate", (data) => {
-    const dot = document.getElementById("status-" + data.userId);  // الحصول على الدائرة التي تمثل حالة الاتصال
-    if (dot) {
-        if (data.status === "online") {
-            // تغيير الحالة إلى "متصل" (اللون الأخضر)
-            dot.classList.add("online");
-            dot.classList.remove("offline");  // إزالة اللون الرمادي
-        } else {
-            // إذا كانت الحالة "غير متصل"
-            dot.classList.remove("online");  // إزالة اللون الأخضر
-            dot.classList.add("offline");  // إضافة اللون الرمادي
-        }
-    }
+
 });
+
