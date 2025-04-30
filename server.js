@@ -1,144 +1,273 @@
+// تكوين Socket.IO للعمل مع Render.com
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
+const cors = require("cors");
+
+// إنشاء تطبيق Express
 const app = express();
+
+// تمكين CORS لجميع الطلبات
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST"],
+  credentials: true
+}));
+
 app.use(express.json());
-const server = http.createServer(app); // ✅ هذا السطر مهم!
+
+// إنشاء خادم HTTP
+const server = http.createServer(app);
+
+// إعداد Socket.IO مع خيارات CORS المناسبة
 const io = new Server(server, {
   cors: {
-    origin: "*"
-  }
+    origin: "*",
+    methods: ["GET", "POST"],
+    credentials: true
+  },
+  transports: ["websocket", "polling"],
+  allowEIO3: true // للتوافق مع الإصدارات القديمة من العملاء
 });
 
-// بقية كود socket.io
+// متغيرات لتخزين حالة المستخدمين والمكالمات
+let users = {}; // { userId: socketId, ... }
+let activeCalls = {}; // { userId: otherUserId, ... } - Stores active call pairs
 
-
-
-// ✅ شغّل السيرفر على الشبكة كلها:
-server.listen(5000, "0.0.0.0", () => {
-  console.log("🚀 السيرفر شغال على http://0.0.0.0:5000");
-});
-
-
-let users = {}; // قائمة المستخدمين المتصلين
-let activeCalls = {}; // قائمة المكالمات النشطة
-
-
+// معالجة اتصال العميل
 io.on("connection", socket => {
-  const axios = require("axios");
+  console.log("🟢 مستخدم متصل:", socket.id);
 
-socket.on("saveCallLog", ({ from, to, duration, type }) => {
-    const minutes = String(Math.floor(duration / 60)).padStart(2, "0");
-    const seconds = String(duration % 60).padStart(2, "0");
-    const formatted = `${minutes}:${seconds}`;
-    const msg = `📞 تمت مكالمة ${type === "video" ? "فيديو" : "صوتية"} مدتها ${formatted}`;
-
-    axios.post("https://halostl.com/social_media/send_call_message.php", {
-
-        from,
-        to,
-        message: msg
-    }).then(() => {
-        console.log("✅ تم إرسال رسالة المكالمة إلى المستخدم", to);
-    }).catch(err => {
-        console.error("🚨 فشل في إرسال رسالة المكالمة:", err.message);
-    });
-});
-
-    console.log("🟢 مستخدم متصل:", socket.id);
-
-    // ✅ تسجيل المستخدم عند الاتصال
-    socket.on("registerUser", userID => {
-        users[userID] = socket.id;
-        console.log(`📌 المستخدم ${userID} تم تسجيله. المتصلين حاليًا:`, users);
-    });
-    
-    socket.on("disconnect", () => {
-      console.log("🔴 المستخدم قطع الاتصال:", socket.id);
-    
-      Object.keys(users).forEach(userID => {
-        if (users[userID] === socket.id) {
-          console.log(`🚪 خروج المستخدم ${userID}`);
-          delete users[userID];
-    
-          // إذا كان في مكالمة، بلغ الطرف الثاني
-          if (activeCalls[userID]) {
-            const otherUser = activeCalls[userID];
-            if (users[otherUser]) {
-              io.to(users[otherUser]).emit("endCall");
-            }
-            delete activeCalls[otherUser];
-            delete activeCalls[userID];
-          }
-        }
-      });
-    });
-    
-    
-    
-
-    // ✅ إرسال طلب اتصال
-    socket.on("callUser", ({ userToCall, from, signal }) => {
-      console.log(`📞 المستخدم ${from} يتصل بـ ${userToCall}`);
-      if (users[userToCall]) {
-        io.to(users[userToCall]).emit("incomingCall", { from, signal });
-    
-        // 🟢 تسجيل المكالمة النشطة
-        activeCalls[from] = userToCall;
-        activeCalls[userToCall] = from;
+  // تسجيل المستخدم عند الاتصال
+  socket.on("registerUser", userID => {
+    // تنظيف البيانات القديمة للمستخدم إذا كان متصلاً سابقاً بنفس المعرف
+    Object.keys(users).forEach(key => {
+      if (users[key] === socket.id && key !== String(userID)) {
+        // If this socket ID was previously associated with a different user ID, remove old entry
+        delete users[key];
       }
     });
-    
-    
+    // If this user ID was previously associated with a different socket ID, remove old entry
+    if (users[userID] && users[userID] !== socket.id) {
+        console.log(`🔄 تحديث معرف المقبس للمستخدم ${userID} من ${users[userID]} إلى ${socket.id}`);
+    }
 
-    // ✅ الرد على الاتصال
-    socket.on("answerCall", ({ to, signal }) => {
-        if (users[to]) {
-            console.log(`✅ المستخدم ${to} قبل المكالمة مع ${activeCalls[to]}`);
-            io.to(users[to]).emit("callAccepted", { signal });
-        }
+    // تسجيل المستخدم الجديد أو تحديث معرف المقبس
+    users[userID] = socket.id;
+    console.log(`📌 المستخدم ${userID} تم تسجيله/تحديثه. المتصلين حاليًا:`, Object.keys(users).length);
+    console.log(users); // Log the users object for debugging
+
+    // إرسال قائمة المستخدمين المتصلين للعميل الحالي
+    socket.emit("onlineUsers", Object.keys(users).map(Number)); // Send as array of numbers
+
+    // إعلام جميع المستخدمين الآخرين بالمستخدم الجديد المتصل
+    socket.broadcast.emit("userConnected", userID);
+  });
+
+  // طلب قائمة المستخدمين المتصلين
+  socket.on("getOnlineUsers", () => {
+      socket.emit("onlineUsers", Object.keys(users).map(Number));
+  });
+
+  // معالجة قطع الاتصال
+  socket.on("disconnect", () => {
+    console.log("🔴 المستخدم قطع الاتصال:", socket.id);
+
+    let disconnectedUser = null;
+
+    // البحث عن المستخدم الذي قطع الاتصال
+    Object.keys(users).forEach(userID => {
+      if (users[userID] === socket.id) {
+        disconnectedUser = userID;
+        console.log(`🚪 خروج المستخدم ${userID}`);
+        delete users[userID];
+
+        // إذا كان في مكالمة، بلغ الطرف الثاني
+        // Note: This simple activeCalls structure might not be robust for group calls or complex scenarios
+        Object.keys(activeCalls).forEach(callerId => {
+            if (activeCalls[callerId] === disconnectedUser) {
+                const otherUser = callerId;
+                if (users[otherUser]) {
+                    io.to(users[otherUser]).emit("endCall", { from: disconnectedUser, reason: "disconnected" });
+                }
+                delete activeCalls[otherUser]; // Remove both entries
+                delete activeCalls[disconnectedUser];
+            } else if (callerId === disconnectedUser) {
+                 const otherUser = activeCalls[callerId];
+                 if (users[otherUser]) {
+                    io.to(users[otherUser]).emit("endCall", { from: disconnectedUser, reason: "disconnected" });
+                }
+                delete activeCalls[otherUser]; // Remove both entries
+                delete activeCalls[disconnectedUser];
+            }
+        });
+      }
     });
 
-    // ✅ تمرير `ICE Candidates`
-    socket.on("iceCandidate", ({ to, candidate }) => {
-        if (users[to]) {
-            console.log(`🧊 تمرير ICE Candidate إلى ${to}:`, candidate);
-            io.to(users[to]).emit("iceCandidate", { candidate });
-        }
-    });
-    
-    
+    // إعلام جميع المستخدمين بخروج المستخدم
+    if (disconnectedUser) {
+      io.emit("userDisconnected", disconnectedUser);
+      console.log("📉 المستخدمين المتبقين:", Object.keys(users).length);
+    }
+  });
 
-    // ✅ إنهاء المكالمة
-    socket.on("endCall", ({ from, to }) => {
-        console.log(`📴 إنهاء المكالمة بين ${from} و ${to}`);
-    
-        // إنهاء المكالمة عند الطرفين
-        if (users[to]) io.to(users[to]).emit("endCall");
-        if (users[from]) io.to(users[from]).emit("endCall");
-    
-        delete activeCalls[from];
-        delete activeCalls[to];
-    });
-    
+  // --- Messaging Events ---
 
-    // ✅ رفض المكالمة
-    socket.on("rejectCall", ({ to }) => {
-        if (users[to]) {
-            console.log(`❌ المستخدم ${to} رفض المكالمة.`);
-            io.to(users[to]).emit("callRejected");
-        }
-    });
+  // إرسال رسالة
+  socket.on("sendMessage", ({ to, from, message, type = 'text', temp_id, timestamp }) => {
+    console.log(`💬 رسالة ${type} من ${from} إلى ${to}: ${type === 'text' ? message.substring(0, 20) + '...' : `[${type}]`}`);
 
-    // ✅ تسجيل خروج المستخدم عند قطع الاتصال
-    socket.on("updateUserStatus", (data) => {
-    // فقط نرسل لباقي المستخدمين عن حالة هاد المستخدم
-    io.emit("updateUserStatus", {
-        userId: data.userId,
-        status: data.status
+    // Here you would typically save the message to the database
+    // For now, we just forward it and confirm
+
+    const messageData = {
+        from,
+        message,
+        type,
+        created_at: timestamp || new Date().toISOString(),
+        // Ideally, the real message_id comes from the database save operation
+        message_id: Date.now() // Use timestamp as a temporary unique ID for example
+    };
+
+    // إرسال الرسالة إلى المستلم إذا كان متصلاً
+    if (users[to]) {
+      io.to(users[to]).emit("newMessage", messageData);
+      console.log(`📤 تم إرسال الرسالة إلى ${to}`);
+    } else {
+      console.log(`📪 المستخدم ${to} غير متصل، سيتم تسليم الرسالة لاحقًا.`);
+      // Logic for offline message handling (e.g., push notifications) would go here
+    }
+
+    // إرسال تأكيد استلام إلى المرسل مع معرف الرسالة المؤقت والحقيقي
+    socket.emit("messageSent", {
+      to,
+      message,
+      type,
+      temp_id, // Include the temp_id sent by the client
+      message_id: messageData.message_id, // Include the real (or temporary real) message ID
+      created_at: messageData.created_at
     });
-    console.log("📶 تحديث حالة المستخدم:", data.userId, "->", data.status);
+  });
+
+  // إشعار بالكتابة
+  socket.on("typing", ({ to, from, isTyping }) => {
+    if (users[to]) {
+      io.to(users[to]).emit("userTyping", {
+        from,
+        isTyping
+      });
+    }
+  });
+
+  // إشعار بقراءة الرسائل
+  socket.on("markAsRead", ({ to, from, messageIds }) => {
+    // Here you would update the message status in the database
+    console.log(`👀 المستخدم ${from} قرأ الرسائل من ${to}:`, messageIds);
+    if (users[to]) {
+      io.to(users[to]).emit("messagesRead", {
+        from,
+        messageIds
+      });
+    }
+  });
+
+  // --- Call Events ---
+
+  // Listen for call initiation (Corrected event name)
+  socket.on("startCall", ({ to, from, callType, callerName }) => {
+    console.log(`📞 المستخدم ${from} (${callerName}) يبدأ اتصال ${callType} مع ${to}`);
+
+    if (users[to]) { // Check if recipient is online
+      // Emit incomingCall to the recipient's socket ID
+      io.to(users[to]).emit("incomingCall", {
+        from,
+        callType,
+        callerName // Pass callerName to the recipient
+      });
+      console.log(`🔔 إرسال إشعار مكالمة واردة إلى ${to} (Socket ID: ${users[to]})`);
+
+      // Note: activeCalls might need more robust handling for multiple calls/missed calls
+      // For simplicity, we just note the attempt. Call state is managed more on call.php
+
+    } else {
+      // If the user is offline, notify the caller
+      console.log(`❌ فشل الاتصال: المستخدم ${to} غير متصل.`);
+      socket.emit("callFailed", {
+        userToCall: to,
+        reason: "user_offline"
+      });
+    }
+  });
+
+  // رفض المكالمة (Sent by recipient)
+  socket.on("rejectCall", ({ to, from }) => { // 'to' is the original caller, 'from' is the recipient rejecting
+    if (users[to]) {
+      console.log(`❌ المستخدم ${from} رفض المكالمة من ${to}.`);
+      io.to(users[to]).emit("callRejected", { from });
+    }
+  });
+
+  // قبول المكالمة (Sent by recipient, includes their signal)
+  socket.on("answerCall", ({ to, from, signal }) => { // 'to' is the original caller, 'from' is the recipient answering
+    if (users[to]) {
+      console.log(`✅ المستخدم ${from} قبل المكالمة من ${to}`);
+      io.to(users[to]).emit("callAccepted", { from, signal });
+      // Mark call as active between the two
+      activeCalls[from] = to;
+      activeCalls[to] = from;
+    }
+  });
+
+  // تمرير إشارات WebRTC (ICE Candidates, SDP offers/answers if needed beyond initial)
+  socket.on("signal", ({ to, from, signal }) => {
+    if (users[to]) {
+      // Forward the signal data (could be offer, answer, or ICE candidate)
+      io.to(users[to]).emit("signal", { from, signal });
+    } else {
+        console.log(`⚠️ لا يمكن إرسال إشارة إلى ${to} (غير متصل)`);
+    }
+  });
+
+  // إنهاء المكالمة (Sent by either party)
+  socket.on("endCall", ({ to, from }) => { // 'from' is the user ending the call, 'to' is the other party
+    console.log(`📴 إنهاء المكالمة بين ${from} و ${to}`);
+
+    // Notify the other party if they are online
+    if (users[to]) {
+        io.to(users[to]).emit("endCall", { from, reason: "hangup" });
+    }
+    // Optionally notify the sender too, for UI cleanup
+    if (users[from]) {
+        io.to(users[from]).emit("endCall", { from, reason: "hangup" });
+    }
+
+    // حذف المكالمة من قائمة المكالمات النشطة
+    delete activeCalls[from];
+    delete activeCalls[to];
+  });
+
+  // Note: Removed "saveCallLog" event as it tried to use Axios on the server-side incorrectly.
+  // Call logging should be handled by the client (call.php) sending a regular message after the call ends.
+
 });
 
+// طريق بسيط للتحقق من حالة الخادم
+app.get("/status", (req, res) => {
+  res.json({
+    status: "online",
+    connections: Object.keys(users).length,
+    activeCalls: Object.keys(activeCalls).length / 2 // Each call involves two users
+  });
 });
+
+// استخدام المنفذ الذي توفره Render.com أو المنفذ 5000 كاحتياطي
+const PORT = process.env.PORT || 5000;
+
+// بدء الاستماع على المنفذ المحدد
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 السيرفر شغال على http://0.0.0.0:${PORT}`);
+});
+
+// تصدير التطبيق لاستخدامه مع Render.com (if needed for specific deployment setups)
+// module.exports = app;
 
