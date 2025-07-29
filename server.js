@@ -33,10 +33,18 @@ const io = new Server(server, {
 // متغيرات لتخزين حالة المستخدمين والمكالمات
 let users = {}; // { userId: socketId, ... }
 let activeCalls = {}; // { userId: otherUserId, ... } - Stores active call pairs
+let groupMembers = {}; // { groupId: [userId1, userId2, ...], ... }
 
 // معالجة اتصال العميل
 io.on("connection", socket => {
   console.log("🟢 مستخدم متصل:", socket.id);
+socket.on("joinGroup", ({ group_id, user_id }) => {
+  if (!groupMembers[group_id]) groupMembers[group_id] = [];
+  if (!groupMembers[group_id].includes(user_id)) {
+    groupMembers[group_id].push(user_id);
+    console.log(`👥 المستخدم ${user_id} انضم للمجموعة ${group_id}`);
+  }
+});
 
   // تسجيل المستخدم عند الاتصال
   socket.on("registerUser", userID => {
@@ -148,7 +156,36 @@ io.on("connection", socket => {
       created_at: messageData.created_at
     });
   });
+// الحدث sendGroupMessage يجب أن يكون هنا بشكل مستقل
+socket.on("sendGroupMessage", ({ group_id, from, message, type = 'text', temp_id, timestamp }) => {
+  console.log(`💬 رسالة مجموعة ${group_id} من ${from}: ${type === 'text' ? message.substring(0, 20) + '...' : `[${type}]`}`);
 
+  const messageData = {
+    group_id,
+    from,
+    message,
+    type,
+    created_at: timestamp || new Date().toISOString(),
+    message_id: Date.now()
+  };
+
+  if (groupMembers[group_id]) {
+    groupMembers[group_id].forEach(userId => {
+      if (userId != from && users[userId]) {
+        io.to(users[userId]).emit("newGroupMessage", messageData);
+      }
+    });
+  }
+
+  socket.emit("groupMessageSent", {
+    group_id,
+    message,
+    type,
+    temp_id,
+    message_id: messageData.message_id,
+    created_at: messageData.created_at
+  });
+});
   // إشعار بالكتابة
   socket.on("typing", ({ to, from, isTyping }) => {
     if (users[to]) {
